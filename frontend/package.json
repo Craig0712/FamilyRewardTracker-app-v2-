@@ -14,7 +14,7 @@
     "react-scripts": "5.0.1",
     "web-vitals": "^2.1.4"
   },
-  "homepage": "https://Craig0712/FamilyRewardTracker-app.git",
+  "homepage": "https://Craig0712.github.io/FamilyRewardTracker-app.git",
   "scripts": {
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build",
