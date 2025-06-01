@@ -17,7 +17,7 @@
   "homepage": "https://Craig0712.github.io/FamilyRewardTracker-app",
   "scripts": {
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d build",
+    "deploy": "gh-pages -d build --branch=gh-pages",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
