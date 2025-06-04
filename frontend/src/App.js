@@ -1,8 +1,29 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, doc, collection, addDoc, setDoc, getDoc, getDocs, deleteDoc, updateDoc, onSnapshot, query, where, Timestamp, writeBatch } from 'firebase/firestore';
-import { UserPlus, Trash2, Gift, Settings, Award, PlusCircle, ChevronDown, ChevronUp, ListChecks, History, FileText, Download } from 'lucide-react';
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithPopup, // 用於 Google 登入
+  GoogleAuthProvider, // Google 登入的 Provider
+  signOut
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  doc, 
+  collection, 
+  addDoc, 
+  setDoc, 
+  getDoc, 
+  getDocs, 
+  deleteDoc, 
+  updateDoc, 
+  onSnapshot, 
+  query, 
+  where, 
+  Timestamp, 
+  writeBatch 
+} from 'firebase/firestore';
+import { UserPlus, Trash2, Gift, Settings, Award, PlusCircle, ChevronDown, ChevronUp, ListChecks, History, FileText, Download, LogIn, LogOut } from 'lucide-react'; // Removed UserCog as it's less relevant now
 
 // Firebase 配置 
 // eslint-disable-next-line no-undef
@@ -16,6 +37,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
   measurementId: "G-RP5VHEKFQ1"
 };
 
+
 // 全局變量
 // eslint-disable-next-line no-undef
 const globalAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -24,12 +46,17 @@ const globalAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const googleProvider = new GoogleAuthProvider(); // 初始化 Google Provider
 
 // 主應用程式組件
 function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [currentUserId, setCurrentUserId] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null); // Firebase Auth User object
+  const [currentUserId, setCurrentUserId] = useState(null); // UID of the logged-in user
+  const [isAuthReady, setIsAuthReady] = useState(false); // Firebase Auth 初始化完成
+  const [isAdmin, setIsAdmin] = useState(false); // 新增：判斷是否為管理者
+
+  // 登入相關 state
+  const [loginError, setLoginError] = useState('');
 
   const [members, setMembers] = useState([]);
   const [newMemberName, setNewMemberName] = useState('');
@@ -42,11 +69,11 @@ function App() {
   const [appSettings, setAppSettings] = useState({ pointsToReward: 100 });
   const [newPointsToReward, setNewPointsToReward] = useState(100);
 
-  const [notification, setNotification] = useState({ message: '', type: '' }); // type: 'success' or 'error'
+  const [notification, setNotification] = useState({ message: '', type: '' });
   const [isLoading, setIsLoading] = useState(false);
 
-  const [expandedMemberId, setExpandedMemberId] = useState(null); // For point history
-  const [expandedRewardHistoryMemberId, setExpandedRewardHistoryMemberId] = useState(null); // For reward history
+  const [expandedMemberId, setExpandedMemberId] = useState(null);
+  const [expandedRewardHistoryMemberId, setExpandedRewardHistoryMemberId] = useState(null);
 
   const [memberPointHistory, setMemberPointHistory] = useState([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
@@ -58,45 +85,94 @@ function App() {
   const [memberToRedeem, setMemberToRedeem] = useState(null);
   const [rewardDescriptionInput, setRewardDescriptionInput] = useState('');
   
-  // Firebase 路徑
-  const getMembersCollectionPath = useCallback(() => `/artifacts/${globalAppId}/users/${currentUserId}/familyMembers`, [currentUserId]);
-  const getPointsLogCollectionPath = useCallback(() => `/artifacts/${globalAppId}/users/${currentUserId}/pointsLog`, [currentUserId]);
-  const getRewardLogCollectionPath = useCallback(() => `/artifacts/${globalAppId}/users/${currentUserId}/rewardLog`, [currentUserId]);
-  const getSettingsDocPath = useCallback(() => `/artifacts/${globalAppId}/users/${currentUserId}/appSettings/config`, [currentUserId]);
+  // Firebase 路徑生成函數
+  const getMembersCollectionPath = useCallback(() => {
+    if (!currentUserId) return null;
+    return `/artifacts/${globalAppId}/users/${currentUserId}/familyMembers`;
+  }, [currentUserId]);
 
+  const getPointsLogCollectionPath = useCallback(() => {
+    if (!currentUserId) return null;
+    return `/artifacts/${globalAppId}/users/${currentUserId}/pointsLog`;
+  }, [currentUserId]);
+
+  const getRewardLogCollectionPath = useCallback(() => {
+    if (!currentUserId) return null;
+    return `/artifacts/${globalAppId}/users/${currentUserId}/rewardLog`;
+  }, [currentUserId]);
+
+  const getSettingsDocPath = useCallback(() => {
+    if (!currentUserId) return null;
+    return `/artifacts/${globalAppId}/users/${currentUserId}/appSettings/config`;
+  }, [currentUserId]);
 
   // 認証狀態監聽
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        setCurrentUser(user);
-        setCurrentUserId(user.uid);
-        //setIsAuthReady(true); //延後到路徑建立後
-      } else {
-        // eslint-disable-next-line no-undef
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          try {
-            // eslint-disable-next-line no-undef
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } catch (error) {
-            console.error("Custom token sign-in error:", error);
-            await signInAnonymously(auth);
-          }
+        // 檢查是否為管理者 (基於 Email)
+        // 重要：將 'YOUR_ADMIN_GOOGLE_EMAIL@gmail.com' 替換成您實際的管理者 Google Email
+        const adminEmail = "craig.kqts@gmail.com"; // 在此處或從環境變數設定管理者 Email
+        if (user.email === adminEmail) {
+          setCurrentUser(user);
+          setCurrentUserId(user.uid);
+          setIsAdmin(true);
+          setLoginError('');
         } else {
-          await signInAnonymously(auth);
+          // 非管理者嘗試登入
+          setCurrentUser(null);
+          setCurrentUserId(null);
+          setIsAdmin(false);
+          setLoginError('存取被拒絕：此帳號非管理者帳號。');
+          await signOut(auth); // 自動登出非管理者
         }
+      } else {
+        setCurrentUser(null);
+        setCurrentUserId(null);
+        setIsAdmin(false);
+        setMembers([]);
+        setAppSettings({ pointsToReward: 100 });
+        setNewPointsToReward(100);
       }
+      setIsAuthReady(true);
     });
     return () => unsubscribe();
   }, []);
 
-  // 確保 currentUserId 有效後才設定 isAuthReady
-  useEffect(() => {
-    if (currentUserId) {
-        setIsAuthReady(true);
+  // 處理 Google 登入
+  const handleGoogleLogin = async () => {
+    setLoginError('');
+    setIsLoading(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+      // onAuthStateChanged 會處理後續 currentUser 和 isAdmin 設定
+    } catch (error) {
+      console.error("Google Login error:", error);
+      // 根據錯誤碼提供更友善的提示
+      let message = "Google 登入失敗。";
+      if (error.code === 'auth/popup-closed-by-user') {
+        message = "登入視窗已關閉，請重試。";
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        message = "登入請求已取消。";
+      }
+      setLoginError(message);
+      showNotification(message, "error");
     }
-  }, [currentUserId]);
+    setIsLoading(false);
+  };
 
+  // 處理登出
+  const handleLogout = async () => {
+    setIsLoading(true);
+    try {
+      await signOut(auth);
+      showNotification("已成功登出", "success");
+    } catch (error) {
+      console.error("Logout error:", error);
+      showNotification("登出失敗: " + error.message, "error");
+    }
+    setIsLoading(false);
+  };
 
   // 顯示通知
   const showNotification = (message, type) => {
@@ -106,8 +182,15 @@ function App() {
 
   // 獲取設定
   useEffect(() => {
-    if (!isAuthReady || !currentUserId) return;
-    const settingsRef = doc(db, getSettingsDocPath());
+    if (!isAuthReady || !currentUserId || !isAdmin) {
+      setAppSettings({ pointsToReward: 100 });
+      setNewPointsToReward(100);
+      return;
+    }
+    const settingsPath = getSettingsDocPath();
+    if (!settingsPath) return;
+
+    const settingsRef = doc(db, settingsPath);
     const unsubscribe = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
@@ -115,7 +198,7 @@ function App() {
         setNewPointsToReward(data.pointsToReward);
       } else {
         setDoc(settingsRef, { pointsToReward: 100 })
-          .then(() => console.log("Default settings created."))
+          .then(() => console.log("Default settings created for admin user:", currentUserId))
           .catch(error => console.error("Error creating default settings:", error));
       }
     }, (error) => {
@@ -123,12 +206,18 @@ function App() {
       showNotification("讀取設定失敗", "error");
     });
     return () => unsubscribe();
-  }, [isAuthReady, currentUserId, getSettingsDocPath]);
+  }, [isAuthReady, currentUserId, isAdmin, getSettingsDocPath]);
 
   // 獲取成員列表
   useEffect(() => {
-    if (!isAuthReady || !currentUserId) return;
-    const membersRef = collection(db, getMembersCollectionPath());
+    if (!isAuthReady || !currentUserId || !isAdmin) {
+      setMembers([]);
+      return;
+    }
+    const membersPath = getMembersCollectionPath();
+    if (!membersPath) return;
+    
+    const membersRef = collection(db, membersPath);
     const q = query(membersRef);
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const membersList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -136,65 +225,34 @@ function App() {
       setMembers(membersList);
       if (membersList.length > 0 && !selectedMemberIdForPoints) {
         setSelectedMemberIdForPoints(membersList[0].id);
+      } else if (membersList.length === 0) {
+        setSelectedMemberIdForPoints('');
       }
     }, (error) => {
       console.error("Error fetching members: ", error);
       showNotification("讀取成員列表失敗", "error");
     });
     return () => unsubscribe();
-  }, [isAuthReady, currentUserId, getMembersCollectionPath, selectedMemberIdForPoints]);
-
+  }, [isAuthReady, currentUserId, isAdmin, getMembersCollectionPath, selectedMemberIdForPoints]);
 
   // 新增成員
   const handleAddMember = async () => {
-    if (!newMemberName.trim()) {
-      showNotification("成員名稱不能為空", "error"); return;
-    }
-    if (!isAuthReady || !currentUserId) {
-      showNotification("使用者未驗證", "error"); return;
-    }
+    if (!newMemberName.trim()) { showNotification("成員名稱不能為空", "error"); return; }
+    if (!currentUserId || !isAdmin) { showNotification("僅管理者可執行此操作", "error"); return; }
+    
+    const membersPath = getMembersCollectionPath();
+    if (!membersPath) { showNotification("無法取得資料路徑", "error"); return; }
+
     setIsLoading(true);
     try {
-      await addDoc(collection(db, getMembersCollectionPath()), {
+      await addDoc(collection(db, membersPath), {
         name: newMemberName.trim(), totalPoints: 0, rewardCount: 0, createdAt: Timestamp.now()
       });
       showNotification(`成員 "${newMemberName.trim()}" 新增成功`, "success");
       setNewMemberName('');
     } catch (error) {
       console.error("Error adding member: ", error);
-      showNotification("新增成員失敗", "error");
-    }
-    setIsLoading(false);
-  };
-
-  // 刪除成員
-  const handleDeleteMember = async (memberId, memberName) => {
-    const confirmed = await showCustomConfirm(`確定要刪除成員 "${memberName}" 嗎？這將會刪除該成員的所有點數及獎勵紀錄。`);
-    if (!confirmed) return;
-    if (!isAuthReady || !currentUserId) {
-      showNotification("使用者未驗證", "error"); return;
-    }
-    setIsLoading(true);
-    try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, getMembersCollectionPath(), memberId));
-      
-      const pointsLogQuery = query(collection(db, getPointsLogCollectionPath()), where("memberId", "==", memberId));
-      const pointsLogSnapshot = await getDocs(pointsLogQuery);
-      pointsLogSnapshot.forEach(doc => batch.delete(doc.ref));
-
-      const rewardLogQuery = query(collection(db, getRewardLogCollectionPath()), where("memberId", "==", memberId));
-      const rewardLogSnapshot = await getDocs(rewardLogQuery);
-      rewardLogSnapshot.forEach(doc => batch.delete(doc.ref));
-
-      await batch.commit();
-      showNotification(`成員 "${memberName}" 及相關紀錄已刪除`, "success");
-      if (selectedMemberIdForPoints === memberId) {
-        setSelectedMemberIdForPoints(members.length > 1 ? members.find(m => m.id !== memberId)?.id || '' : '');
-      }
-    } catch (error) {
-      console.error("Error deleting member: ", error);
-      showNotification("刪除成員失敗", "error");
+      showNotification("新增成員失敗: " + error.message, "error");
     }
     setIsLoading(false);
   };
@@ -209,22 +267,67 @@ function App() {
     });
   };
 
+  // 刪除成員
+  const handleDeleteMember = async (memberId, memberName) => {
+    const confirmed = await showCustomConfirm(`確定要刪除成員 "${memberName}" 嗎？這將會刪除該成員的所有點數及獎勵紀錄。`);
+    if (!confirmed) return;
+    if (!currentUserId || !isAdmin) { showNotification("僅管理者可執行此操作", "error"); return; }
+
+    const membersPath = getMembersCollectionPath();
+    const pointsLogPath = getPointsLogCollectionPath();
+    const rewardLogPath = getRewardLogCollectionPath();
+
+    if (!membersPath || !pointsLogPath || !rewardLogPath) {
+      showNotification("無法取得資料路徑，刪除失敗", "error"); return;
+    }
+
+    setIsLoading(true);
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, membersPath, memberId));
+      
+      const pointsLogQuery = query(collection(db, pointsLogPath), where("memberId", "==", memberId));
+      const pointsLogSnapshot = await getDocs(pointsLogQuery);
+      pointsLogSnapshot.forEach(doc => batch.delete(doc.ref));
+
+      const rewardLogQuery = query(collection(db, rewardLogPath), where("memberId", "==", memberId));
+      const rewardLogSnapshot = await getDocs(rewardLogQuery);
+      rewardLogSnapshot.forEach(doc => batch.delete(doc.ref));
+
+      await batch.commit();
+      showNotification(`成員 "${memberName}" 及相關紀錄已刪除`, "success");
+      if (selectedMemberIdForPoints === memberId) {
+        setSelectedMemberIdForPoints(members.length > 1 ? members.find(m => m.id !== memberId)?.id || '' : '');
+      }
+    } catch (error) {
+      console.error("Error deleting member: ", error);
+      showNotification("刪除成員失敗: " + error.message, "error");
+    }
+    setIsLoading(false);
+  };
+
   // 新增點數紀錄
   const handleAddPoints = async () => {
     if (!selectedMemberIdForPoints) { showNotification("請選擇成員", "error"); return; }
     const points = parseInt(pointsInput);
     if (isNaN(points) || points <= 0) { showNotification("請輸入有效的點數 (正整數)", "error"); return; }
     if (!pointsDate) { showNotification("請選擇日期", "error"); return; }
-    if (!isAuthReady || !currentUserId) { showNotification("使用者未驗證", "error"); return; }
+    if (!currentUserId || !isAdmin) { showNotification("僅管理者可執行此操作", "error"); return; }
+
+    const membersPath = getMembersCollectionPath();
+    const pointsLogPath = getPointsLogCollectionPath();
+    if (!membersPath || !pointsLogPath) { showNotification("無法取得資料路徑", "error"); return; }
+
     setIsLoading(true);
     try {
-      const memberRef = doc(db, getMembersCollectionPath(), selectedMemberIdForPoints);
+      const memberRef = doc(db, membersPath, selectedMemberIdForPoints);
       const memberDoc = await getDoc(memberRef);
       if (!memberDoc.exists()) { showNotification("選擇的成員不存在", "error"); setIsLoading(false); return; }
+      
       const memberData = memberDoc.data();
       const newTotalPoints = (memberData.totalPoints || 0) + points;
       const batch = writeBatch(db);
-      batch.set(doc(collection(db, getPointsLogCollectionPath())), {
+      batch.set(doc(collection(db, pointsLogPath)), {
         memberId: selectedMemberIdForPoints, memberName: memberData.name, points: points,
         date: Timestamp.fromDate(new Date(pointsDate)), notes: pointsNotes.trim(), createdAt: Timestamp.now()
       });
@@ -233,13 +336,14 @@ function App() {
       showNotification(`已為 ${memberData.name} 新增 ${points} 點`, "success");
       setPointsInput(''); setPointsNotes('');
     } catch (error) {
-      console.error("Error adding points: ", error); showNotification("新增點數失敗", "error");
+      console.error("Error adding points: ", error); showNotification("新增點數失敗: " + error.message, "error");
     }
     setIsLoading(false);
   };
 
   // 開啟兌換獎勵 Modal
   const openRedeemModal = (member) => {
+    if (!currentUserId || !isAdmin) { showNotification("僅管理者可執行此操作", "error"); return; }
     if ((member.totalPoints || 0) < appSettings.pointsToReward) {
       showNotification(`${member.name} 的點數不足以兌換獎勵 (需要 ${appSettings.pointsToReward} 點)`, "error");
       return;
@@ -251,40 +355,33 @@ function App() {
 
   // 確認兌換獎勵
   const handleConfirmRedeemReward = async () => {
-    if (!memberToRedeem || !rewardDescriptionInput.trim()) {
-      showNotification("請輸入獎勵內容", "error"); return;
-    }
-    if (!isAuthReady || !currentUserId) { showNotification("使用者未驗證", "error"); return; }
+    if (!memberToRedeem || !rewardDescriptionInput.trim()) { showNotification("請輸入獎勵內容", "error"); return; }
+    if (!currentUserId || !isAdmin) { showNotification("僅管理者可執行此操作", "error"); return; }
+
+    const membersPath = getMembersCollectionPath();
+    const rewardLogPath = getRewardLogCollectionPath();
+    if (!membersPath || !rewardLogPath) { showNotification("無法取得資料路徑", "error"); return; }
+
     setIsLoading(true);
     try {
-      const memberRef = doc(db, getMembersCollectionPath(), memberToRedeem.id);
-      const memberData = memberToRedeem; // Already have member data from `memberToRedeem` state
+      const memberRef = doc(db, membersPath, memberToRedeem.id);
+      const memberData = memberToRedeem; 
 
       const newTotalPoints = memberData.totalPoints - appSettings.pointsToReward;
       const newRewardCount = (memberData.rewardCount || 0) + 1;
 
       const batch = writeBatch(db);
-      // 1. 新增獎勵兌換紀錄
-      batch.set(doc(collection(db, getRewardLogCollectionPath())), {
-        memberId: memberToRedeem.id,
-        memberName: memberData.name,
-        rewardDescription: rewardDescriptionInput.trim(),
-        pointsSpent: appSettings.pointsToReward,
+      batch.set(doc(collection(db, rewardLogPath)), {
+        memberId: memberToRedeem.id, memberName: memberData.name,
+        rewardDescription: rewardDescriptionInput.trim(), pointsSpent: appSettings.pointsToReward,
         redeemedAt: Timestamp.now()
       });
-      // 2. 更新成員點數和獎勵次數
-      batch.update(memberRef, {
-        totalPoints: newTotalPoints,
-        rewardCount: newRewardCount
-      });
+      batch.update(memberRef, { totalPoints: newTotalPoints, rewardCount: newRewardCount });
       await batch.commit();
       showNotification(`${memberData.name} 成功兌換獎勵: ${rewardDescriptionInput.trim()}`, "success");
-      setIsRedeemModalOpen(false);
-      setMemberToRedeem(null);
-      setRewardDescriptionInput('');
+      setIsRedeemModalOpen(false); setMemberToRedeem(null); setRewardDescriptionInput('');
     } catch (error) {
-      console.error("Error redeeming reward: ", error);
-      showNotification("兌換獎勵失敗", "error");
+      console.error("Error redeeming reward: ", error); showNotification("兌換獎勵失敗: " + error.message, "error");
     }
     setIsLoading(false);
   };
@@ -293,23 +390,30 @@ function App() {
   const handleUpdateSettings = async () => {
     const points = parseInt(newPointsToReward);
     if (isNaN(points) || points <= 0) { showNotification("請輸入有效的兌換所需點數", "error"); return; }
-    if (!isAuthReady || !currentUserId) { showNotification("使用者未驗證", "error"); return; }
+    if (!currentUserId || !isAdmin) { showNotification("僅管理者可執行此操作", "error"); return; }
+
+    const settingsPath = getSettingsDocPath();
+    if (!settingsPath) { showNotification("無法取得資料路徑", "error"); return; }
+    
     setIsLoading(true);
     try {
-      await setDoc(doc(db, getSettingsDocPath()), { pointsToReward: points });
+      await setDoc(doc(db, settingsPath), { pointsToReward: points });
       showNotification("設定更新成功", "success");
     } catch (error) {
-      console.error("Error updating settings: ", error); showNotification("更新設定失敗", "error");
+      console.error("Error updating settings: ", error); showNotification("更新設定失敗: " + error.message, "error");
     }
     setIsLoading(false);
   };
 
   // 獲取成員點數歷史紀錄
   const fetchMemberPointHistory = useCallback(async (memberId) => {
-    if (!isAuthReady || !currentUserId || !memberId) return;
+    if (!currentUserId || !isAdmin || !memberId) return;
+    const pointsLogPath = getPointsLogCollectionPath();
+    if (!pointsLogPath) return;
+
     setIsHistoryLoading(true);
     try {
-      const q = query(collection(db, getPointsLogCollectionPath()), where("memberId", "==", memberId));
+      const q = query(collection(db, pointsLogPath), where("memberId", "==", memberId));
       const querySnapshot = await getDocs(q);
       let history = querySnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
       history.sort((a, b) => b.date.toMillis() - a.date.toMillis());
@@ -318,39 +422,42 @@ function App() {
       console.error("Error fetching point history:", error); showNotification("讀取點數歷史失敗", "error");
     }
     setIsHistoryLoading(false);
-  }, [isAuthReady, currentUserId, getPointsLogCollectionPath]);
+  }, [currentUserId, isAdmin, getPointsLogCollectionPath]);
 
   const toggleMemberExpansion = (memberId) => {
     if (expandedMemberId === memberId) {
       setExpandedMemberId(null); setMemberPointHistory([]);
     } else {
       setExpandedMemberId(memberId); fetchMemberPointHistory(memberId);
-      setExpandedRewardHistoryMemberId(null); setMemberRewardHistory([]); // Close other history
+      setExpandedRewardHistoryMemberId(null); setMemberRewardHistory([]); 
     }
   };
 
   // 獲取成員獎勵歷史紀錄
   const fetchMemberRewardHistory = useCallback(async (memberId) => {
-    if (!isAuthReady || !currentUserId || !memberId) return;
+    if (!currentUserId || !isAdmin || !memberId) return;
+    const rewardLogPath = getRewardLogCollectionPath();
+    if (!rewardLogPath) return;
+
     setIsRewardHistoryLoading(true);
     try {
-      const q = query(collection(db, getRewardLogCollectionPath()), where("memberId", "==", memberId));
+      const q = query(collection(db, rewardLogPath), where("memberId", "==", memberId));
       const querySnapshot = await getDocs(q);
       let history = querySnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
       history.sort((a, b) => b.redeemedAt.toMillis() - a.redeemedAt.toMillis());
       setMemberRewardHistory(history);
-    } catch (error) {
+    } catch (error) { // Corrected syntax: removed "=>"
       console.error("Error fetching reward history:", error); showNotification("讀取獎勵歷史失敗", "error");
     }
     setIsRewardHistoryLoading(false);
-  }, [isAuthReady, currentUserId, getRewardLogCollectionPath]);
+  }, [currentUserId, isAdmin, getRewardLogCollectionPath]);
 
   const toggleRewardHistoryExpansion = (memberId) => {
     if (expandedRewardHistoryMemberId === memberId) {
       setExpandedRewardHistoryMemberId(null); setMemberRewardHistory([]);
     } else {
       setExpandedRewardHistoryMemberId(memberId); fetchMemberRewardHistory(memberId);
-      setExpandedMemberId(null); setMemberPointHistory([]); // Close other history
+      setExpandedMemberId(null); setMemberPointHistory([]); 
     }
   };
 
@@ -367,7 +474,7 @@ function App() {
   };
 
   const escapeCsvCell = (cellData) => {
-    const stringData = String(cellData == null ? "" : cellData); // Handle null/undefined
+    const stringData = String(cellData == null ? "" : cellData);
     if (stringData.includes(',') || stringData.includes('"') || stringData.includes('\n')) {
       return `"${stringData.replace(/"/g, '""')}"`;
     }
@@ -377,14 +484,22 @@ function App() {
   const convertToCsv = (dataArray, headers) => {
     const headerRow = headers.map(escapeCsvCell).join(',') + '\r\n';
     const contentRows = dataArray.map(row => 
-      headers.map(header => escapeCsvCell(row[header.toLowerCase().replace(/\s+/g, '')] || row[header] )).join(',') // try to match common key patterns
+      headers.map(header => escapeCsvCell(row[header.toLowerCase().replace(/\s+/g, '')] || row[header] )).join(',')
     ).join('\r\n');
-    return '\uFEFF' + headerRow + contentRows; // Add BOM for Excel UTF-8 compatibility
+    return '\uFEFF' + headerRow + contentRows;
   };
 
-
   const exportData = async (dataType, format = 'csv') => {
-    if (!isAuthReady || !currentUserId) { showNotification("使用者未驗證", "error"); return; }
+    if (!currentUserId || !isAdmin) { showNotification("僅管理者可執行此操作", "error"); return; }
+    
+    const membersPath = getMembersCollectionPath();
+    const pointsLogPath = getPointsLogCollectionPath();
+    const rewardLogPath = getRewardLogCollectionPath();
+
+    if (!membersPath || !pointsLogPath || !rewardLogPath) {
+      showNotification("無法取得資料路徑，匯出失敗", "error"); return;
+    }
+    
     setIsLoading(true);
     let dataToExport = [];
     let headers = [];
@@ -393,95 +508,106 @@ function App() {
     try {
       if (dataType === 'members') {
         headers = ['ID', '名稱', '總點數', '獎勵次數', '建立時間'];
-        const membersSnapshot = await getDocs(collection(db, getMembersCollectionPath()));
+        const membersSnapshot = await getDocs(collection(db, membersPath));
         dataToExport = membersSnapshot.docs.map(doc => {
           const data = doc.data();
-          return {
-            id: doc.id,
-            名稱: data.name,
-            總點數: data.totalPoints,
-            獎勵次數: data.rewardCount,
-            建立時間: data.createdAt?.toDate ? data.createdAt.toDate().toLocaleString() : ''
-          };
+          return { id: doc.id, 名称: data.name, 总点数: data.totalPoints, 奖励次数: data.rewardCount, 建立时间: data.createdAt?.toDate ? data.createdAt.toDate().toLocaleString() : '' };
         });
         filename = `成員列表.${format}`;
       } else if (dataType === 'pointsLog') {
         headers = ['紀錄ID', '成員ID', '成員名稱', '點數', '日期', '備註', '記錄時間'];
-        const pointsLogSnapshot = await getDocs(collection(db, getPointsLogCollectionPath()));
+        const pointsLogSnapshot = await getDocs(collection(db, pointsLogPath));
         dataToExport = pointsLogSnapshot.docs.map(doc => {
           const data = doc.data();
-          return {
-            紀錄id: doc.id,
-            成員id: data.memberId,
-            成員名稱: data.memberName,
-            點數: data.points,
-            日期: data.date?.toDate ? data.date.toDate().toLocaleDateString() : '',
-            備註: data.notes,
-            記錄時間: data.createdAt?.toDate ? data.createdAt.toDate().toLocaleString() : ''
-          };
+          return { 纪录id: doc.id, 成员id: data.memberId, 成员名称: data.memberName, 点数: data.points, 日期: data.date?.toDate ? data.date.toDate().toLocaleDateString() : '', 备注: data.notes, 记录时间: data.createdAt?.toDate ? data.createdAt.toDate().toLocaleString() : '' };
         });
         filename = `點數歷史紀錄.${format}`;
       } else if (dataType === 'rewardLog') {
         headers = ['紀錄ID', '成員ID', '成員名稱', '獎勵內容', '花費點數', '兌換時間'];
-        const rewardLogSnapshot = await getDocs(collection(db, getRewardLogCollectionPath()));
+        const rewardLogSnapshot = await getDocs(collection(db, rewardLogPath));
         dataToExport = rewardLogSnapshot.docs.map(doc => {
           const data = doc.data();
-          return {
-            紀錄id: doc.id,
-            成員id: data.memberId,
-            成員名稱: data.memberName,
-            獎勵內容: data.rewardDescription,
-            花費點數: data.pointsSpent,
-            兌換時間: data.redeemedAt?.toDate ? data.redeemedAt.toDate().toLocaleString() : ''
-          };
+          return { 纪录id: doc.id, 成员id: data.memberId, 成员名称: data.memberName, 奖励内容: data.rewardDescription, 花费点数: data.pointsSpent, 兑换时间: data.redeemedAt?.toDate ? data.redeemedAt.toDate().toLocaleString() : '' };
         });
         filename = `獎勵兌換歷史.${format}`;
       }
 
-      if (dataToExport.length === 0) {
-        showNotification("沒有可匯出的資料", "info");
-        setIsLoading(false);
-        return;
-      }
+      if (dataToExport.length === 0) { showNotification("沒有可匯出的資料", "info"); setIsLoading(false); return; }
       
-      // For CSV, map data keys to header names for convertToCsv
       const mappedData = dataToExport.map(item => {
         const newItem = {};
         headers.forEach(header => {
-            // Find a key in item that matches header (case-insensitive, ignore spaces)
             const keyInItem = Object.keys(item).find(k => k.toLowerCase().replace(/\s+/g, '') === header.toLowerCase().replace(/\s+/g, '')) || header;
             newItem[header] = item[keyInItem];
         });
         return newItem;
       });
-
+      // eslint-disable-next-line no-undef
       const fileContent = convertToCsv(mappedData, headers);
+      // eslint-disable-next-line no-undef
       downloadFile(filename, fileContent, format === 'txt' ? 'text/plain;charset=utf-8;' : 'text/csv;charset=utf-8;');
       showNotification("資料匯出成功", "success");
-
     } catch (error) {
-      console.error(`Error exporting ${dataType}: `, error);
-      showNotification("資料匯出失敗", "error");
+      console.error(`Error exporting ${dataType}: `, error); showNotification("資料匯出失敗: " + error.message, "error");
     }
     setIsLoading(false);
   };
-
-
+  // UI 渲染
   if (!isAuthReady) {
-    return <div className="flex justify-center items-center h-screen bg-slate-100 text-slate-700"><div>正在載入應用程式...</div></div>;
+    return <div className="flex justify-center items-center h-screen bg-slate-100 text-slate-700"><div>正在載入認證服務...</div></div>;
+  }
+
+  // 如果未登入或非管理者，顯示登入按鈕
+  if (!currentUser || !isAdmin) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-sky-100 to-blue-200 flex flex-col items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md text-center">
+          <h1 className="text-3xl font-bold text-sky-700 mb-8">家庭點數獎勵系統</h1>
+          <p className="text-slate-600 mb-2">請使用您的 Google 帳號登入以管理系統。</p>
+          <p className="text-xs text-slate-500 mb-6">(僅限授權的管理者帳號)</p>
+          <button
+            onClick={handleGoogleLogin}
+            disabled={isLoading}
+            className="w-full bg-red-600 text-white p-4 rounded-lg hover:bg-red-700 transition-colors disabled:bg-slate-400 font-semibold text-lg flex items-center justify-center shadow-md hover:shadow-lg"
+          >
+            <svg className="w-6 h-6 mr-3" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="#FFFFFF" d="M21.35,11.1H12.18V13.83H18.69C18.36,17.64 15.19,19.27 12.19,19.27C8.36,19.27 5,16.25 5,12C5,7.9 8.2,4.73 12.19,4.73C14.03,4.73 15.69,5.36 16.95,6.57L19.05,4.8C17.19,3.11 14.9,2 12.19,2C6.42,2 2.03,6.8 2.03,12C2.03,17.05 6.16,22 12.19,22C17.6,22 21.54,18.33 21.54,12.81C21.54,12.21 21.45,11.65 21.35,11.1Z"/></svg>
+            使用 Google 帳號登入
+          </button>
+          {loginError && <p className="mt-4 text-sm text-red-600">{loginError}</p>}
+        </div>
+        {notification.message && (
+          <div className={`fixed top-5 right-5 p-4 rounded-lg shadow-lg text-white ${notification.type === 'success' ? 'bg-green-500' : 'bg-red-500'} z-50`}>
+            {notification.message}
+          </div>
+        )}
+      </div>
+    );
   }
   
-  // UI 渲染
+  // 已登入且為管理者，顯示主應用程式介面
   return (
     <div className="min-h-screen bg-gradient-to-br from-sky-100 to-blue-200 p-4 sm:p-6 md:p-8 font-sans">
-      <div className="container mx-auto max-w-5xl"> {/* Increased max-width for more space */}
-        <header className="mb-8 text-center">
-          <h1 className="text-4xl font-bold text-sky-700">家庭點數獎勵系統</h1>
-          {currentUserId && <p className="text-xs text-slate-500 mt-1">使用者ID: {currentUserId}</p>}
+      <div className="container mx-auto max-w-5xl">
+        <header className="mb-8">
+          <div className="flex justify-between items-center">
+            <h1 className="text-4xl font-bold text-sky-700">家庭點數獎勵系統</h1>
+            <div className="flex items-center space-x-3">
+              <span className="text-sm text-slate-600 hidden sm:inline">管理者: {currentUser.email}</span>
+              <button
+                onClick={handleLogout}
+                disabled={isLoading}
+                className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors disabled:bg-slate-300 flex items-center"
+              >
+                <LogOut className="mr-2 h-5 w-5" /> 登出
+              </button>
+            </div>
+          </div>
+          {currentUserId && <p className="text-xs text-slate-500 mt-1">管理者 UID: {currentUserId}</p>}
         </header>
 
+        {/* ... 其餘 UI (通知, Modal, 主要內容區塊) 與前一版管理者登入後相同 ... */}
         {notification.message && (
-          <div className={`fixed top-5 right-5 p-4 rounded-lg shadow-lg text-white ${notification.type === 'success' ? 'bg-green-500' : notification.type === 'info' ? 'bg-blue-500' : 'bg-red-500'} z-50 transition-opacity duration-300`}>
+          <div className={`fixed top-5 right-5 p-4 rounded-lg shadow-lg text-white ${notification.type === 'success' ? 'bg-green-500' : notification.type === 'info' ? 'bg-blue-500' : 'bg-red-500'} z-50`}>
             {notification.message}
           </div>
         )}
@@ -522,8 +648,8 @@ function App() {
             </div>
           </div>
         )}
-
-        <div className="grid lg:grid-cols-3 gap-6"> {/* Changed to 3 columns for larger screens */}
+        
+        <div className="grid lg:grid-cols-3 gap-6">
           {/* 左側欄：成員管理 & 點數輸入 */}
           <div className="lg:col-span-1 space-y-6">
             <section className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition-shadow">
@@ -550,7 +676,7 @@ function App() {
           </div>
 
           {/* 中間欄：成員列表 */}
-          <div className="lg:col-span-2 space-y-6"> {/* Member list takes 2 columns on large screens */}
+          <div className="lg:col-span-2 space-y-6">
             <section className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition-shadow">
               <h2 className="text-2xl font-semibold text-sky-600 mb-4 flex items-center"><ListChecks className="mr-2 h-6 w-6" /> 成員點數總覽</h2>
               {members.length === 0 ? (<p className="text-slate-500">尚未新增任何成員。</p>) : (
@@ -596,7 +722,6 @@ function App() {
               )}
             </section>
             
-            {/* 設定 & 匯出區塊 */}
             <div className="grid md:grid-cols-2 gap-6">
                 <section className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition-shadow">
                   <h2 className="text-2xl font-semibold text-sky-600 mb-4 flex items-center"><Settings className="mr-2 h-6 w-6" /> 應用程式設定</h2>
@@ -615,11 +740,12 @@ function App() {
                     <button onClick={() => exportData('pointsLog', 'csv')} disabled={isLoading} className="w-full bg-teal-500 text-white p-3 rounded-lg hover:bg-teal-600 disabled:bg-slate-300 font-semibold text-sm">匯出點數歷史</button>
                     <button onClick={() => exportData('rewardLog', 'csv')} disabled={isLoading} className="w-full bg-teal-500 text-white p-3 rounded-lg hover:bg-teal-600 disabled:bg-slate-300 font-semibold text-sm">匯出獎勵歷史</button>
                   </div>
-                   <p className="text-xs text-slate-500 mt-2">檔案將以 CSV 格式下載，可用 Excel 開啟。TXT 格式內容與 CSV 相同。</p>
+                   <p className="text-xs text-slate-500 mt-2">檔案將以 CSV 格式下載。</p>
                 </section>
             </div>
           </div>
         </div>
+
         <footer className="mt-12 text-center text-sm text-slate-600">
           <p>&copy; {new Date().getFullYear()} 家庭點數獎勵App.</p>
         </footer>
@@ -629,4 +755,3 @@ function App() {
 }
 
 export default App;
-
