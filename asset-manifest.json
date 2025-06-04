@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/FamilyRewardTracker-app-v2-/static/css/main.77b1edbc.css",
+    "main.js": "/FamilyRewardTracker-app-v2-/static/js/main.470b8207.js",
+    "static/js/453.8ab44547.chunk.js": "/FamilyRewardTracker-app-v2-/static/js/453.8ab44547.chunk.js",
+    "index.html": "/FamilyRewardTracker-app-v2-/index.html",
+    "main.77b1edbc.css.map": "/FamilyRewardTracker-app-v2-/static/css/main.77b1edbc.css.map",
+    "main.470b8207.js.map": "/FamilyRewardTracker-app-v2-/static/js/main.470b8207.js.map",
+    "453.8ab44547.chunk.js.map": "/FamilyRewardTracker-app-v2-/static/js/453.8ab44547.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.77b1edbc.css",
+    "static/js/main.470b8207.js"
+  ]
+}
