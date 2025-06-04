@@ -37,7 +37,9 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
   measurementId: "G-RP5VHEKFQ1"
 };
 
+
 // 全局變量
+// eslint-disable-next-line no-undef
 const globalAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 // 初始化 Firebase
@@ -110,7 +112,7 @@ function App() {
       if (user) {
         // 檢查是否為管理者 (基於 Email)
         // 重要：將 'YOUR_ADMIN_GOOGLE_EMAIL@gmail.com' 替換成您實際的管理者 Google Email
-        const adminEmail = "YOUR_ADMIN_GOOGLE_EMAIL@gmail.com"; // 在此處或從環境變數設定管理者 Email
+        const adminEmail = "craig.kqts@gmail.com"; // 在此處或從環境變數設定管理者 Email
         if (user.email === adminEmail) {
           setCurrentUser(user);
           setCurrentUserId(user.uid);
@@ -459,7 +461,34 @@ function App() {
     }
   };
 
-  // 資料匯出 (與先前版本相同，但增加了 isAdmin 檢查)
+  // 資料匯出相關函數
+  const downloadFile = (filename, content, mimeType = 'text/csv;charset=utf-8;') => {
+    const blob = new Blob([content], { type: mimeType });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  };
+
+  const escapeCsvCell = (cellData) => {
+    const stringData = String(cellData == null ? "" : cellData);
+    if (stringData.includes(',') || stringData.includes('"') || stringData.includes('\n')) {
+      return `"${stringData.replace(/"/g, '""')}"`;
+    }
+    return stringData;
+  };
+  
+  const convertToCsv = (dataArray, headers) => {
+    const headerRow = headers.map(escapeCsvCell).join(',') + '\r\n';
+    const contentRows = dataArray.map(row => 
+      headers.map(header => escapeCsvCell(row[header.toLowerCase().replace(/\s+/g, '')] || row[header] )).join(',')
+    ).join('\r\n');
+    return '\uFEFF' + headerRow + contentRows;
+  };
+
   const exportData = async (dataType, format = 'csv') => {
     if (!currentUserId || !isAdmin) { showNotification("僅管理者可執行此操作", "error"); return; }
     
@@ -470,7 +499,7 @@ function App() {
     if (!membersPath || !pointsLogPath || !rewardLogPath) {
       showNotification("無法取得資料路徑，匯出失敗", "error"); return;
     }
-    // ... (其餘匯出邏輯與前一版相同)
+    
     setIsLoading(true);
     let dataToExport = [];
     let headers = [];
@@ -513,8 +542,9 @@ function App() {
         });
         return newItem;
       });
-
+      // eslint-disable-next-line no-undef
       const fileContent = convertToCsv(mappedData, headers);
+      // eslint-disable-next-line no-undef
       downloadFile(filename, fileContent, format === 'txt' ? 'text/plain;charset=utf-8;' : 'text/csv;charset=utf-8;');
       showNotification("資料匯出成功", "success");
     } catch (error) {
